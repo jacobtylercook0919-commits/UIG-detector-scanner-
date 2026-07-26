@@ -1,0 +1,363 @@
+def __init__(self, camera_id=0, confidence_threshold=0.5):
+    """
+    Initialize the UIG Detector
+    
+    Args:
+        camera_id (int): Camera device ID (default: 0 for primary camera)
+        confidence_threshold (float): Minimum confidence score for detections
+    """
+    self.camera_id = camera_id
+    self.confidence_threshold = confidence_threshold
+    self.cap = None
+    self.is_running = False
+    self.detections_history = deque(maxlen=100)
+    self.fps = 0
+    self.frame_count = 0
+    self.start_time = None
+    
+    logger.info(f"Initializing UIG Detector with camera {camera_id}")
+
+def initialize_camera(self):
+    """Initialize camera connection"""
+    try:
+        self.cap = cv2.VideoCapture(self.camera_id)
+        
+        if not self.cap.isOpened():
+            logger.error(f"Failed to open camera {self.camera_id}")
+            return False
+        
+        # Set camera properties
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        logger.info("Camera initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error initializing camera: {e}")
+        return False
+
+def detect_ui_elements(self, frame):
+    """
+    Detect UI/UIG elements in the frame
+    
+    Args:
+        frame (np.ndarray): Input frame from camera
+        
+    Returns:
+        list: List of detected elements with coordinates and confidence
+    """
+    detections = []
+    
+    # Convert to HSV for better color detection
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    
+    # Detect gold/yellow colors (UIG indicators)
+    lower_gold = np.array([15, 100, 100])
+    upper_gold = np.array([35, 255, 255])
+    gold_mask = cv2.inRange(hsv, lower_gold, upper_gold)
+    
+    # Detect edges for UI boundaries
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    
+    # Find contours
+    contours, _ = cv2.findContours(gold_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        
+        # Filter by area to avoid noise
+        if area < 100:
+            continue
+        
+        # Get bounding rectangle
+        x, y, w, h = cv2.boundingRect(contour)
+        
+        # Calculate confidence based on area and shape
+        confidence = min(area / 5000, 1.0)
+        
+        if confidence >= self.confidence_threshold:
+            detections.append({
+                'type': 'gold_ui_element',
+                'x': int(x),
+                'y': int(y),
+                'width': int(w),
+                'height': int(h),
+                'area': int(area),
+                'confidence': float(confidence),
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    return detections
+
+def detect_text_regions(self, frame):
+    """Detect potential text regions (gold script areas)"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Apply morphological operations to enhance text
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    dilated = cv2.dilate(gray, kernel, iterations=2)
+    eroded = cv2.erode(dilated, kernel, iterations=1)
+    
+    # Detect edges
+    edges = cv2.Canny(eroded, 30, 100)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    text_regions = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > 50:
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = w / h if h > 0 else 0
+            
+            # Text regions typically have aspect ratios between 0.2 and 5
+            if 0.1 < aspect_ratio < 10 and area > 100:
+                text_regions.append({
+                    'x': int(x),
+                    'y': int(y),
+                    'width': int(w),
+                    'height': int(h),
+                    'confidence': 0.7
+                })
+    
+    return text_regions
+
+def draw_detections(self, frame, detections, text_regions=None):
+    """
+    Draw detection boxes and information on frame
+    
+    Args:
+        frame (np.ndarray): Input frame
+        detections (list): List of detections
+        text_regions (list): List of text regions
+        
+    Returns:
+        np.ndarray: Annotated frame
+    """
+    annotated = frame.copy()
+    
+    # Draw UI element detections
+    for detection in detections:
+        x, y, w, h = detection['x'], detection['y'], detection['width'], detection['height']
+        confidence = detection['confidence']
+        
+        # Draw rectangle
+        cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 215, 255), 2)
+        
+        # Draw label
+        label = f"UIG: {confidence:.2f}"
+        cv2.putText(annotated, label, (x, y - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 215, 255), 2)
+    
+    # Draw text regions
+    if text_regions:
+        for region in text_regions:
+            x, y, w, h = region['x'], region['y'], region['width'], region['height']
+            cv2.rectangle(annotated, (x, y), (x + w, y + h), (255, 0, 0), 1)
+            cv2.putText(annotated, "TEXT", (x, y - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+    
+    # Draw FPS
+    cv2.putText(annotated, f"FPS: {self.fps:.1f}", (10, 30),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    
+    # Draw detection count
+    cv2.putText(annotated, f"Detections: {len(detections)}", (10, 60),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    
+    return annotated
+
+def process_frame(self, frame):
+    """
+    Main frame processing pipeline
+    
+    Args:
+        frame (np.ndarray): Input frame
+        
+    Returns:
+        tuple: (annotated_frame, detections, text_regions)
+    """
+    # Detect UI elements
+    detections = self.detect_ui_elements(frame)
+    
+    # Detect text regions
+    text_regions = self.detect_text_regions(frame)
+    
+    # Draw annotations
+    annotated = self.draw_detections(frame, detections, text_regions)
+    
+    # Store in history
+    self.detections_history.append({
+        'timestamp': datetime.now(),
+        'detections': detections,
+        'text_regions': text_regions,
+        'frame_number': self.frame_count
+    })
+    
+    return annotated, detections, text_regions
+
+def calculate_fps(self):
+    """Calculate frames per second"""
+    if self.start_time is None:
+        self.start_time = time.time()
+    
+    self.frame_count += 1
+    elapsed = time.time() - self.start_time
+    
+    if elapsed >= 1.0:
+        self.fps = self.frame_count / elapsed
+        self.frame_count = 0
+        self.start_time = time.time()
+
+def run(self, display=True, record=False, output_file='uig_detection.avi'):
+    """
+    Run the detector
+    
+    Args:
+        display (bool): Whether to display the video feed
+        record (bool): Whether to record the output
+        output_file (str): Output video file path
+    """
+    if not self.initialize_camera():
+        return
+    
+    self.is_running = True
+    video_writer = None
+    
+    if record:
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_writer = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+        logger.info(f"Recording to {output_file}")
+    
+    logger.info("Starting detection loop. Press 'q' to quit, 's' to save frame.")
+    
+    try:
+        while self.is_running:
+            ret, frame = self.cap.read()
+            
+            if not ret:
+                logger.warning("Failed to read frame")
+                break
+            
+            # Process frame
+            annotated, detections, text_regions = self.process_frame(frame)
+            
+            # Calculate FPS
+            self.calculate_fps()
+            
+            # Record if enabled
+            if record and video_writer:
+                video_writer.write(annotated)
+            
+            # Display if enabled
+            if display:
+                cv2.imshow('UIG Detector Scanner', annotated)
+                
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    logger.info("Quit signal received")
+                    break
+                elif key == ord('s'):
+                    filename = f"uig_detection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    cv2.imwrite(filename, annotated)
+                    logger.info(f"Frame saved: {filename}")
+    
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    
+    finally:
+        self.stop(video_writer)
+
+def stop(self, video_writer=None):
+    """Clean up resources"""
+    self.is_running = False
+    
+    if self.cap:
+        self.cap.release()
+    
+    if video_writer:
+        video_writer.release()
+    
+    cv2.destroyAllWindows()
+    logger.info("Detector stopped and resources released")
+
+def get_detections_summary(self):
+    """Get summary of recent detections"""
+    if not self.detections_history:
+        return {}
+    
+    summary = {
+        'total_detections': len(self.detections_history),
+        'recent_detections': list(self.detections_history)[-10:],
+        'detection_types': {},
+        'highest_confidence': 0,
+        'average_detection_count': 0
+    }
+    
+    total_detections_count = 0
+    for item in self.detections_history:
+        total_detections_count += len(item['detections'])
+        for detection in item['detections']:
+            det_type = detection.get('type', 'unknown')
+            summary['detection_types'][det_type] = summary['detection_types'].get(det_type, 0) + 1
+            summary['highest_confidence'] = max(summary['highest_confidence'], detection['confidence'])
+    
+    summary['average_detection_count'] = total_detections_count / len(self.detections_history) if self.detections_history else 0
+    
+    return summary
+
+def export_detections(self, filename):
+    """Export detection history to JSON"""
+    try:
+        data = {
+            'export_time': datetime.now().isoformat(),
+            'total_frames': len(self.detections_history),
+            'detections': [
+                {
+                    'frame_number': item['frame_number'],
+                    'timestamp': item['timestamp'].isoformat(),
+                    'detections': item['detections'],
+                    'text_regions': item['text_regions']
+                }
+                for item in self.detections_history
+            ]
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        logger.info(f"Detections exported to {filename}")
+        return True
+    except Exception as e:
+        logger.error(f"Error exporting detections: {e}")
+        return False
+
+
+# Create detector instance
+detector = UIGDetector(camera_id=0, confidence_threshold=0.5)
+
+# Run detector with recording
+try:
+    detector.run(display=True, record=False)
+except Exception as e:
+    logger.error(f"Error during detection: {e}")
+finally:
+    # Export detections
+    summary = detector.get_detections_summary()
+    print("\n" + "=" * 60)
+    print("Detection Summary:")
+    print("=" * 60)
+    print(f"Total Detection Events: {summary.get('total_detections', 0)}")
+    print(f"Average Detections per Frame: {summary.get('average_detection_count', 0):.2f}")
+    print(f"Highest Confidence: {summary.get('highest_confidence', 0):.2f}")
+    print(f"Detection Types: {summary.get('detection_types', {})}")
+    
+    # Export results
+    detector.export_detections('uig_detection_results.json')
